@@ -13,15 +13,39 @@ class TsetNumpyStock(TestCase):
 
     def testReadFile(self):
         file_name = "./demo.csv"
+
+        #获取收盘价 和 成交量  这样获得是end_price 和 volumn两个数组
         end_price,volumn = np.loadtxt(
             fname= file_name,
             delattr= ",",
-            usecols= (2,6), #第三列 到 第七列
+            usecols= (2,6), #第三列 和 第七列
             unpack= True
-        )
+        ) 
 
 
 
     #计算最大最小值
     def testMaxAndMin(self):
-        
+        file_name = "./demo.csv"
+
+        #获取最高价 和 最低价  这样获得是end_price 和 volumn两个数组
+        high_price,low_price = np.loadtxt(
+            fname= file_name,
+            delattr= ",",
+            usecols= (4,5), #第四列 到 第五列
+            unpack= True
+        ) 
+
+
+        #print("max_price = {}".format(high_price.max()))  #那取最高价就是 high_price数组内的max喽
+
+
+    def testPip(self):
+        file_name = "./demo.csv"
+
+        high_price,low_price = np.loadtxt(
+            fname= file_name,
+            delattr= ",",
+            usecols= (4,5), #第四列 到 第五列
+            unpack= True
+        ) 
