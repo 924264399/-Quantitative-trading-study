@@ -13,6 +13,12 @@ class TsetNumpyStock(TestCase):
 
     def testReadFile(self):
         file_name = "./demo.csv"
+        end_price,volumn = np.loadtxt(
+            fname= file_name,
+            delattr= ",",
+            usecols= (2,6), #第三列 到 第七列
+            unpack= True
+        )
 
 
 
