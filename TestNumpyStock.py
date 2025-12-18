@@ -32,20 +32,95 @@ class TsetNumpyStock(TestCase):
         high_price,low_price = np.loadtxt(
             fname= file_name,
             delattr= ",",
-            usecols= (4,5), #第四列 到 第五列
+            usecols= (4,5), #第四列 和 第五列
             unpack= True
         ) 
 
+        print("max_price = {}".format(high_price.max()))  #那取最高价就是 high_price数组内的max喽
+        print("max_price = {}".format(low_price.min())) 
 
-        #print("max_price = {}".format(high_price.max()))  #那取最高价就是 high_price数组内的max喽
 
 
-    def testPip(self):
+    def testPtp(self):
         file_name = "./demo.csv"
 
         high_price,low_price = np.loadtxt(
             fname= file_name,
             delattr= ",",
-            usecols= (4,5), #第四列 到 第五列
+            usecols= (4,5), #第四列 和 第五列
             unpack= True
         ) 
+
+        print("max_min_of_high_price = {}".format(np.ptp(high_price)))    #算最高价的 极差  这有什么意义？  可以算某个时间段比如收盘价的max-min   
+        print("max_min_of_high_price = {}".format(np.ptp(low_price))) 
+
+
+
+    #计算成交量加权平均价格 VWAP 
+    def testAve(self):
+        file_name = "./demo.csv"
+
+        end_price,volumn = np.loadtxt(
+            fname= file_name,
+            delattr= ",",
+            usecols= (2,6), #第二列 和 第列列
+            unpack= True
+        ) 
+        print("avg_price = {}".format(np.average(end_price)))  #平均价格
+        print("avg_price = {}".format(np.average(end_price,weighr = volumn)))  #加权平均价格
+
+
+    #计算中位数
+    def testMed(self):
+        file_name = "./demo.csv"
+
+        end_price,volumn = np.loadtxt(
+            fname= file_name,
+            delattr= ",",
+            usecols= (2,6), #第二列 和 第列列
+            unpack= True
+        ) 
+        print("avg_price = {}".format(np.median(end_price)))  #收盘价中位数
+       
+
+    #计算方差
+    def testVar(self):
+        file_name = "./demo.csv"
+
+        end_price,volumn = np.loadtxt(
+            fname= file_name,
+            delattr= ",",
+            usecols= (2,6), #第二列 和 第列列
+            unpack= True
+        ) 
+        print("avg_price = {}".format(np.var(end_price)))  #收盘价方差
+
+
+    
+    #计算 日对数收益率 再算日波动率  再算年波动率
+    def testVolatility(self):
+        file_name = "./demo.csv"
+
+        end_price,volumn = np.loadtxt(
+            fname= file_name,
+            delattr= ",",
+            usecols= (2,6), #第二列 和 第列列
+            unpack= True
+        ) 
+
+        #计算对数收益率
+        log_returns = np.diff(np.log(end_price))
+
+        #计算日波动率（对数收益率的样本标准差） 
+        # 仍用ddof=1（样本标准差），贴合“用历史数据估计未来波动率”的场景
+        daily_volatility = np.std(log_returns, ddof=1)
+
+        # ===================== 第四步：计算年化波动率 =====================
+        annualization_factor = np.sqrt(255)  # A股年交易天数≈255
+        annual_volatility = daily_volatility * annualization_factor
+
+        return log_returns,daily_volatility,annual_volatility
+    
+
+#关于波动率：- 波动率看的是「收益率的离散程度」：只要收益率稳定（哪怕持续涨 / 持续跌），波动率就低；
+#- 哪怕价格最终没涨没跌，但只要中途涨跌反复，收益率的离散程度就高，波动率就高
