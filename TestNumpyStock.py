@@ -124,3 +124,33 @@ class TsetNumpyStock(TestCase):
 
 #关于波动率：- 波动率看的是「收益率的离散程度」：只要收益率稳定（哪怕持续涨 / 持续跌），波动率就低；
 #- 哪怕价格最终没涨没跌，但只要中途涨跌反复，收益率的离散程度就高，波动率就高
+
+
+
+#均线可以通过滑动窗口平混函数求   也可以用卷积  但是卷积的的化实战中用的少 因为不够直观
+# 2. 定义滑动窗口平均函数（通用计算N日均线）
+    def calc_ma(self,price_arr, window):
+        # 生成滑动窗口：shape=(len(price_arr)-window+1, window)
+        sliding_windows = np.lib.stride_tricks.sliding_window_view(price_arr, window)
+        # 对每个窗口求均值（即均线）
+        ma = np.mean(sliding_windows, axis=1)
+        # 补全前window-1个NaN（因为前window-1天不够算均线）
+        ma_full = np.concatenate([np.full(window-1, np.nan), ma])
+        return ma_full
+    
+
+    def get_5(self):
+        file_name = "./demo.csv"
+
+        end_price,volumn = np.loadtxt(
+            fname= file_name,
+            delattr= ",",
+            usecols= (2,6), #第二列 和 第列列
+            unpack= True
+        ) 
+
+        return self.calc_ma(end_price,5)
+    
+
+
+    
