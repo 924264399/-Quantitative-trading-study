@@ -69,9 +69,7 @@ class TestPandasStock:
 
 
 if __name__ == "__main__":
-    # 1. 实例化类
+  
     test_obj = TestPandasStock()
-    # 2. 调用testReadFile方法
-    #test_obj.testReadFile()
-    # 3. 调用testTime方法
+
     test_obj.testCloseMin()
