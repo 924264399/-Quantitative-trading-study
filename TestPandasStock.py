@@ -2,6 +2,8 @@ import matplotlib.pyplot as plt
 import pandas as pd
 from unittest import TestCase
 
+import mplfinance as mpf
+
 class TestPandasStock:
 
 
@@ -65,11 +67,73 @@ class TestPandasStock:
 
 
 
+#####--------------------————————————————————————————————————————————————————--------用mplfinance画K线图——————————————————————————————————————————---------------------------------########
+
+
+class TestMplFinanceKline(TestCase):
+
+    def ReadFile(self):
+        flie_name = "./demo.csv"
+        df = pd.read_csv(flie_name)
+
+        df.columns = ['stock_id', 'date', 'close', 'open', 'high', 'low','volume'] # 重命名列
+
+        return df
+
+
+
+
+
+    def testMplFinanceKline(self):
+
+        df = self.ReadFile()
+
+        df['date'] = pd.to_datetime(df['date'])  # 将 'date' 列转换为 datetime 类型
+
+        df.set_index('date', inplace=True)  # 设置 'date' 列为索引   这句是必须的  mpf.plot 是专门绘制时间序列金融图表的函数，它对输入的 DataFrame 有一个硬性要求：
+                                            #必须以「datetime 类型的时间索引」作为行索引（不能是默认的 0/1/2... 整数索引）
+
+
+
+
+        # 1. 自定义样式：涨红跌绿
+        custom_style = mpf.make_mpf_style(
+         base_mpf_style='default',  # 基于默认样式修改
+         # 核心：设置市场颜色（涨红跌绿）
+         marketcolors=mpf.make_marketcolors(
+        up='red',        # 上涨K线/成交量柱：红色
+        down='green',    # 下跌K线/成交量柱：绿色
+        edge='inherit',  # K线边框颜色继承涨跌色
+        wick='inherit',  # K线影线颜色继承涨跌色
+        volume='inherit' # 成交量柱颜色继承涨跌色
+        ),
+        gridcolor='gray',    # 网格颜色
+        gridstyle='--',      # 网格虚线
+        y_on_right=False     # 纵轴标签在左侧（符合A股习惯）
+       )
+
+
+
+
+        mpf.plot(df, type='candle', volume=True, mav=(5,10), title='平安银行k线',  show_nontrading=False)  # 绘制K线图 但是此时是K线是默认的 就是白涨黑跌
+        mpf.plot(df, type='candle', volume=True, mav=(5,10), title='平安银行k线', style=custom_style, show_nontrading=False)  # 绘制K线图  使用自定义样式 
+
+
+    
+
+
+
+
+
+
+
+
+
 
 
 
 if __name__ == "__main__":
   
-    test_obj = TestPandasStock()
+    test_obj = TestMplFinanceKline()
 
-    test_obj.testCloseMin()
+    test_obj.testMplFinanceKline()
