@@ -95,6 +95,38 @@ class TestMplFinanceKline(TestCase):
 
 
 
+        #macd核心公式
+        ## MACD核心公式
+        df['ema12'] = df['close'].ewm(span=12, adjust=False).mean()  # 快速EMA    // 指数移动平均线 ewm是权重  .mean是计算均值  合起来就是指数加权平均
+        df['ema26'] = df['close'].ewm(span=26, adjust=False).mean()  # 慢速EMA
+        df['macd_line'] = df['ema12'] - df['ema26']                  # MACD线
+        df['signal_line'] = df['macd_line'].ewm(span=9, adjust=False).mean()  # 信号线
+        df['macd_hist'] = df['macd_line'] - df['signal_line']        # 直方图                                    
+
+
+
+        #设置子图
+        add_plots = [
+            # ===== 1. MACD 叠加层（panel=2）=====
+            # MACD线 + 信号线
+            mpf.make_addplot(
+                df[['macd_line', 'signal_line']],
+                panel=2,          # 子图位置（成交量是panel=1，MACD放panel=2）
+                title='MACD',     # 子图标题
+                ylabel='MACD'     # 纵轴标签
+            ),
+            # MACD直方图（红正绿负）
+            mpf.make_addplot(
+                df['macd_hist'],
+                type='bar',       # 柱状图
+                panel=2,
+                color=['red' if x > 0 else 'green' for x in df['macd_hist']]
+            ),
+            
+        ]
+
+
+
 
         # 1. 自定义样式：涨红跌绿
         custom_style = mpf.make_mpf_style(
@@ -117,6 +149,8 @@ class TestMplFinanceKline(TestCase):
 
         mpf.plot(df, type='candle', volume=True, mav=(5,10), title='平安银行k线',  show_nontrading=False)  # 绘制K线图 但是此时是K线是默认的 就是白涨黑跌
         mpf.plot(df, type='candle', volume=True, mav=(5,10), title='平安银行k线', style=custom_style, show_nontrading=False)  # 绘制K线图  使用自定义样式 
+
+        mpf.plot(df, type='candle', volume=True, mav=(5,10), title='平安银行k线', style=custom_style, addplot=add_plots, show_nontrading=False)  # 绘制K线图  使用自定义样式  并且添加macd子图
 
 
     
