@@ -11,6 +11,33 @@ def initialize(context):
     set_option('order_volume_ratio', 0.2)  # 单个订单最多成交盘口的20%  小资金放宽 大资金你给紧一点
 
 
+
+
+#   分钟级别的定时函数：
+
+# run_minutely(
+#     func,          # 要运行的策略函数
+#     time_rule,     # 运行频率（比如每5分钟、每10分钟）
+#     reference_security
+# )
+
+# time_rule：必须用MarketTime类指定频率，比如：
+# MarketTime(minute='1m')：每分钟运行一次；
+# MarketTime(minute='5m')：每 5 分钟运行一次；
+# MarketTime(minute='30m')：每 30 分钟运行一次。
+
+
+
+# 实战：
+
+# def initialize(context):# 每5分钟运行一次futures_5m_strategy函数（期货策略）
+#     run_minutely(
+#         futures_5m_strategy,
+#         time_rule=MarketTime(minute='5m'),
+#         reference_security='IF2503.CCFX'  # 参考期货标的，确定交易时段)
+  
+
+
 #策略函数
 def market_open(context):
     security = g.security

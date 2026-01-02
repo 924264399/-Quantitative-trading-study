@@ -1,0 +1,1147 @@
+# 克隆自聚宽文章：https://www.joinquant.com/post/49316
+# 标题：IM空策略（周期为5min）及期货策略模板
+# 作者：JSCH-ZYJ
+# 此文件用于我自己的学习 感谢JSCH-ZYJ的无私分享
+# 检查后发现代码中有一些不适合实盘的地方  这个只能作为回测学习使用  -来自Yaoyu Liu
+
+"""
+策略：
+1. 趋势-多-RSI
+2. 趋势-空-RSI
+3. 震荡-多-ROC均线突破
+4. 震荡-多-WR+RSI
+5. 震荡-空-ROC均线突破
+6. 震荡-空-WR+RSI+3周期
+7. 震荡-空-ROC高位死叉
+8. 震荡-多-ROC低位金叉
+9. 趋势-空-MACD顶背离
+10. 震荡-多-WR+RSI+3周期
+11. 趋势-多-均线策略
+12. 趋势-空-均线策略
+13. 趋势-多-BOLL上轨突破
+14. 趋势-空-BOLL下轨突破
+15. 趋势-多-BOLL+RSI
+"""
+from enum import Enum, auto
+from typing import Tuple, List
+import datetime
+
+import pandas as pd
+import numpy as np
+
+from jqdata import *
+from jqlib.technical_analysis import *
+from datetime import datetime, time  
+
+################################# 调参区 START ####################################
+# 数据运行周期 五日请选择5m, 日内请选择1m
+UNIT_1M_5M = '5m'  # 1m 1分钟, 5m 5分钟
+
+# 期货合约 IF 请选择 IF, IM 请选择 IM
+CONTRACT = 'IM'  # IF, IM
+
+# 选择策略
+SELECTED_STRATEGY = 16  # 策略编号，范围：1-15
+
+# 日内请选择True
+CLOSE_POSITIONS_AT_CLOSE = True  # 14：55 收盘时是否平仓 True False
+
+# 用于防止没开仓
+IN_CASE_OF_OPEN_POSITION = True
+
+# 策略1：趋势-多-RSI
+RS5_BUY_RSI = 70  # 买入RSI 范围：0-100
+RS5_SELL_RSI = 30  # 卖出RSI 范围：0-100
+
+# 策略2：趋势-空-RSI
+RL5_BUY_RSI = 70  # 买入RSI 范围：0-100
+RL5_SELL_RSI = 30  # 卖出RSI 范围：0-100
+
+# 策略3：震荡-多-ROC均线突破
+RML_CLOSE_RSI = 80  # 卖出RSI 范围：0-100
+
+# 策略4：震荡-多-WR+RSI
+WR_BUY_WILL = 90  # 威廉指标的超卖线 范围：0-100
+WR_SELL_RSI = 65  # 卖出RSI 范围：0-100
+
+# 策略5：震荡-空-ROC均线突破
+RMS_CLOSE_RSI = 20  # 卖出RSI 范围：0-100
+
+# 策略6：震荡-空-WR+RSI+3周期
+WR3S_BUY_RSI = 35  # 买入RSI 范围：0-100
+WR3S_SELL_WILL = 20  # 卖出RSI 范围：0-100
+
+# 策略7：震荡-空-ROC高位死叉
+RDC_SELL_RSI = 25  # 卖出RSI 范围：0-100
+
+# 策略8：震荡-多-ROC低位金叉
+RGC_BUY_RSI = 75  # 买入RSI 范围：0-100
+
+# 策略9：趋势-空-MACD顶背离
+# 无参数
+
+# 策略10：震荡-多-WR+RSI+3周期
+WR3L_BUY_WILL = 80  # 威廉指标的超卖线 范围：0-100
+WR3L_SELL_RSI = 65  # 卖出RSI 范围：0-100
+
+# 策略11：趋势-多-均线策略
+MAL_LOW_MA_N = 30  # N日最低价移动平均
+MAL_HIGH_MA_N = 30  # N日最高价移动平均
+
+# 策略12：趋势-空-均线策略
+MAS_LOW_MA_N = 30  # N日最低价移动平均
+MAS_HIGH_MA_N = 30  # N日最高价移动平均
+
+# 策略13：趋势-多-BOLL上轨突破
+BOLLS_N = 20  # N日布林线
+
+# 策略14：趋势-空-BOLL下轨突破
+BOLLL_N = 20  # N日布林线
+
+# 策略15：趋势-多-BOLL+RSI
+BRL_MA_N = 30  # N日移动平均
+BRL_SELL_RSI = 85  # 卖出RSI 范围：0-100
+
+
+################################# 调参区 END ####################################
+
+# 通用参数
+DEALS = 1  # 期货合约手数 比赛默认为1手
+
+# 每交易日交易限制次数 6组 12次 如果CLOSE_POSITIONS_AT_CLOSE为True则为11次 为强行平仓留一次 LYY
+INTERNAL_TRADING_LIMIT = 11 if CLOSE_POSITIONS_AT_CLOSE else 12
+
+# 注册
+func_reg = {}
+
+
+class TechnicalIndicators:
+    """
+    技术指标计算类
+    """
+
+    def __init__(self, data: pd.DataFrame):
+        """
+        初始化
+        :param data:  DataFrame, 包含股票数据的DataFrame
+        """
+        # 检查data是否包含必要的列
+        assert 'close' in data.columns, 'data中必须包含close列'
+        assert 'high' in data.columns, 'data中必须包含high列'
+        assert 'low' in data.columns, 'data中必须包含low列'
+        self.data = data
+
+    # 一分钟数据转成5分钟数据
+    def data_1m_to_5m(self, data: pd.DataFrame) -> pd.DataFrame:
+        """
+        将1分钟数据转换成5分钟数据
+        :param data:  1分钟数据 包含open, close, high, low, volume
+        :return:  5分钟数据
+        """
+        # 将1分钟数据转换成5分钟数据 按照5分钟周期合成 比如：00:00-00:05, 00:05-00:10
+        data_5m = data.resample('5T', closed='right', label='right').agg(
+            {'open': 'first', 'high': 'max', 'low': 'min', 'close': 'last', 'volume': 'sum'})
+        return data_5m
+
+    def __getitem__(self, column: str) -> pd.Series:
+        """
+        获取列数据
+        :param column:
+        :return:
+        """
+        return self.data[column]
+
+    def CROSS(self, data1, data2) -> pd.Series:
+        """
+        判断两个序列是否发生交叉
+        :param data1:
+        :param data2:
+        :return:
+        """
+        return np.concatenate(([False], np.logical_and(data1[1:] < data2[1:], data1[:-1] > data2[:-1])))
+
+    def REF(self, column, N=1) -> pd.Series:
+        """
+        引用N周期前的数据
+        :param column:  列名
+        :param N:  周期
+        :return:  REF
+        """
+        return self.data[column].shift(N)
+
+    def RSI(self, N) -> pd.Series:
+        CLOSE = self.data['close'].iloc[14:]
+        LC = CLOSE.shift(1)
+        delta = CLOSE - LC
+        gain = delta.where(delta > 0, 0).rolling(window=N).mean()
+        loss = -delta.where(delta < 0, 0).rolling(window=N).mean()
+
+        rs = gain / loss
+        rs[loss == 0] = 0  # 避免除以零
+        rsi = 100 - (100 / (1 + rs))
+        return rsi
+    def ROC(self, N=12) -> pd.Series:
+        """
+        变动率指标
+        :param N:  周期
+        :return:  ROC
+        """
+        CLOSE = self.data['close']
+        return (CLOSE / self.REF('close', N) - 1) * 100
+
+    def WR(self, N=10) -> pd.Series:
+        """
+        威廉指标
+        :param N:  周期
+        :return:  WR
+        """
+        HIGH = self.data['high']
+        LOW = self.data['low']
+        return ((HIGH - self.REF('high', N)) / (HIGH - LOW)) * 100
+
+    def BOLL(self, CLOSE=None, N=20, P=2) -> Tuple[pd.Series, pd.Series, pd.Series]:
+        """
+        布林线
+        :param N:  周期
+        :param P:  偏差
+        :return:  UPPER, MIDDLE, LOWER
+        """
+        if CLOSE is None:
+            CLOSE = self.data['close']
+        middle_band = CLOSE.rolling(window=N).mean()
+        std = CLOSE.rolling(window=N).std()
+        upper_band = middle_band + P * std
+        lower_band = middle_band - P * std
+        return upper_band, middle_band, lower_band
+
+    def MA(self, N=10) -> pd.Series:
+        """
+        移动平均线
+        :param N:  周期
+        :return:  MA
+        """
+        CLOSE = self.data['close']
+        return CLOSE.rolling(window=N).mean()
+
+    @staticmethod
+    def MA_column(data: pd.Series, N=10) -> pd.Series:
+        """
+        移动平均线
+        :param data:  数据
+        :param N:  周期
+        :return:  MA
+        """
+        return data.rolling(window=N).mean()
+
+    def EMA(self, data_input, N):
+        """
+
+        :param data_input:
+        :param N:
+        :return:
+        """
+        if isinstance(data_input, str):  # 如果输入是字符串，假设它是列名
+            data_series = self.data[data_input]
+        elif isinstance(data_input, pd.Series):  # 如果输入是Series对象，直接使用
+            data_series = data_input
+        else:
+            raise ValueError("data_input must be a string (column name) or a pandas Series")
+        return data_series.ewm(span=N).mean()
+
+    def MACD(self, SHORT=12, LONG=26, MID=9) -> Tuple[pd.Series, pd.Series, pd.Series]:
+        """
+        指数平滑异同平均线
+        :param SHORT:  短期
+        :param LONG:  长期
+        :param MID:  信号
+        :return:  DIF, DEA, MACD
+        """
+        DIF = self.EMA('close', SHORT) - self.EMA('close', LONG)
+        DEA = self.EMA(DIF, MID)
+        MACD = (DIF - DEA) * 2
+        return DIF, DEA, MACD
+
+    def BIAS(self, N=20) -> pd.Series:
+        """
+        乖离率
+        :param N:  周期
+        :return:  BIAS
+        """
+        CLOSE = self.data['close']
+        MA = self.MA(N)
+        return (CLOSE - MA) / MA * 100
+        
+    def BEAR(self, N):
+        LOW = self.data['low']
+        EMA = self.MA(N)
+        CLOSE = self.data['close']
+        BEAR = (LOW - EMA) / CLOSE
+        return BEAR * 100
+
+
+class OrderType(Enum):
+    """
+    交易方向
+    """
+    LONG = 'long'
+    SHORT = 'short'
+
+
+class CrossSignal(Enum):
+    """
+    交叉信号
+    """
+    GOLDEN_CROSS = auto()
+    DEATH_CROSS = auto()
+    INIT = auto()
+
+
+class FuturesDeliveryHandler:
+    """
+    期货交割日处理器
+    """
+    def __init__(self, context: object) -> object:
+        """
+        初始化
+        :rtype: object
+        :param context:
+        """
+        self.context = context
+
+    def _get_CCFX_end_date(self, future_code: str) -> datetime.date:
+        """
+        获取金融期货合约到期日
+        :param future_code: 期货合约代码
+        :return: 合约到期日
+        """
+        # 获取金融期货合约到期日
+        return get_security_info(future_code).end_date
+
+    def handle_delivery_day(self):
+        """
+        处理交割日的逻辑，如果当日是交割日，则先平仓当月合约，然后开仓下月合约
+        """
+        current_date = self.context.current_dt.date()
+        IF_current_month = g.IF_current_month
+        IF_next_month = g.IF_next_month
+        end_date = self._get_CCFX_end_date(IF_current_month)
+
+        # 如果今天是交割日
+        if current_date == end_date:
+
+            if g.flag: # g.flag 为True 表示有持仓
+                # 先平当前月份的合约
+                order_target_mw(IF_current_month, 0, side=g.long_short)
+                # 再开下个月的合约
+                order_mw(IF_next_month, g.deals, side=g.long_short)
+            g.IF_current_month = IF_next_month
+            log.info("--交割日处理完成，已平仓并开启下月合约--")
+
+
+class StrategyExecutor:
+    """
+    策略执行器
+    """
+    def __init__(self, context):
+        self.context = context
+
+    def _set_params(self,unit: str,
+                    reference: str,
+                    windows_size: int = 240):
+        """
+        初始化参数
+        :return:
+        """
+        g.unit = unit  # 数据运行周期
+        g.reference = reference  # 分析参考标的
+        g.data_windows_size = windows_size  # 数据窗口大小
+        # g.flag = False  # 是否持仓
+
+    def _init_option(self):
+        """
+        初始化期货相关设定
+        :return:
+        """
+        set_benchmark(g.reference)
+        set_option('use_real_price', True)
+        log.info('初始函数开始运行且全局只运行一次')
+
+        # 防止未来函数
+        set_option('avoid_future_data', True)
+
+        ### 期货相关设定 ###
+        set_subportfolios(
+            [SubPortfolioConfig(
+                cash=self.context.portfolio.starting_cash,
+                type='index_futures'
+            )]
+        )
+
+        # 这里是实盘要删除把  LYY
+        # 实盘要检测一下资金把
+        # 期货类每笔交易时的手续费是：买入时万分之0.23,卖出时万分之0.23,平今仓为万分之23
+        set_order_cost(
+            OrderCost(
+                open_commission=0.000023,
+                close_commission=0.000023,
+                close_today_commission=0.000023
+            ),
+            # 期货类型
+            type='index_futures'
+        )
+
+        # 设定保证金比例
+        set_option('futures_margin_rate', 0.15)
+
+        # 设置期货交易的滑点
+        set_slippage(StepRelatedSlippage(2))
+
+    def _schedule(self):
+        """
+        设定定时运行的任务
+        :return:
+        """
+        run_daily(before_market_open, time='09:30', reference_security=g.reference)
+        run_daily(market_open, time='every_bar', reference_security=g.reference)
+
+    # 判断 if SELECTED_STRATEGY in func_reg:
+    def initialize(self, unit: str = '1m',
+                   reference: str = "000300.XSHG"):
+        """
+        初始化
+        :return:
+        """
+        if SELECTED_STRATEGY in func_reg:
+            self._set_params(unit, reference)
+            self._init_option()
+            self._schedule()
+        else:
+            log.error("Invalid option")
+
+
+class MarketDataRetriever:
+    """
+    市场数据检索器
+    """
+
+    @staticmethod
+    def get_data_bars(reference: str = "000300.XSHG",
+                      count: int = 500,
+                      unit: str = '1m',
+                      fields: List[str] = None,
+                      include_now: bool = True,
+                      df: bool = True
+                      ) -> pd.DataFrame:
+        """
+        获取历史数据 bars
+        :param reference:  参考标的
+        :param count:  数据数量
+        :param unit:  数据周期
+        :param fields:  数据字段
+        :param include_now:  是否包含当前数据
+        :param df:  是否返回DataFrame
+        :return:  历史数据
+        """
+        if fields is None:
+            fields = ['open', 'close', 'high', 'low', 'volume']
+        return get_bars(reference, count=count, unit=unit,
+                        fields=fields, include_now=include_now, df=df)
+
+    @staticmethod
+    def get_price(security: str,
+                  start_date: str,
+                  end_date: str,
+                  frequency: str = '1d',
+                  fields: List[str] = None,
+                  skip_paused: bool = True,
+                  fq: str = 'pre') -> pd.DataFrame:
+        """
+        获取历史价格 price
+        :param security: 证券代码
+        :param start_date: 开始日期
+        :param end_date: 结束日期
+        :param frequency: 数据周期
+        :param fields: 数据字段
+        :param skip_paused: 是否跳过停牌数据
+        :param fq: 复权选项
+        :return: 历史价格
+        """
+        return get_price(security=security, start_date=start_date, end_date=end_date,
+                         frequency=frequency, fields=fields, skip_paused=skip_paused, fq=fq)
+
+class Error(Exception):
+    """
+    自定义异常
+    """
+    def __init__(self, error_type, error_message):
+        super().__init__(error_message)
+        self.error_type = error_type
+        self.error_message = error_message
+        log.error(f"{error_type}: {error_message}")
+
+def alias(alias_name, g, ss, **kwargs):
+    """
+    为函数设置别名，并将关键字参数设置到 g 对象中
+    :param alias_name:  函数别名
+    :param kwargs:  关键字参数
+    :return: 函数装饰器
+    """
+    if ss == alias_name:
+        def decorator(func):
+            # 将关键字参数设置到 g 对象中
+            for key, value in kwargs.items():
+                setattr(g, key, value)
+            # 将函数以别名的形式注册到全局命名空间
+            globals()[alias_name] = func
+            func_reg[alias_name] = func
+            return func
+
+        return decorator
+    else:
+        def decorator(func):
+            return func
+
+        return decorator
+
+
+def initialize(context):
+    """
+    初始化函数(掘金平台会自动调用)
+    :param context:
+    :return:
+    """
+    executor = StrategyExecutor(context)
+    # 判断如果CONTRACT是IF那么reference就是000300.XSHG，如果CONTRACT是IM那么reference就是000852.XSHG
+    # 定义标的
+    reference = "000300.XSHG"  # 沪深300指数
+    # 写判断赋值标的
+    if CONTRACT == 'IF':
+        reference = "IF9999.CCFX"
+    elif CONTRACT == 'IM':
+        reference = "IM9999.CCFX"
+
+    executor.initialize(unit=UNIT_1M_5M,
+                        reference=reference)
+
+
+def before_market_open(context):
+    """
+    开盘前运行函数
+    在每个交易日开盘前执行，用于处理交割日的平仓和开仓操作
+    :param context:
+    :return:
+    """
+    # 交易次数初始化
+    g.trade_count = 0
+    # 用于防止没开仓
+    g.temp_close = False
+    # 交易记录
+    g.daily_trade_record = []
+    g.temp_time = time(0,0,0)
+
+
+    try:
+        g.IF_current_month = get_future_contracts(CONTRACT)[0]
+        # 获取下月沪深300指数期货合约
+        g.IF_next_month = get_future_contracts(CONTRACT)[1]
+
+    except Exception as e:
+        raise Error('before_market_open', f"获取合约失败：IM请选择2022年7月22号之后的日期")
+
+    # # 处理交割日逻辑
+    # handle_delivery_day(context)
+    handler = FuturesDeliveryHandler(context)
+    handler.handle_delivery_day()
+
+
+def market_open(context):
+    """
+    开盘时运行函数
+    :param context:
+    :return:
+    """
+    # info = {}
+    # info.IF_current_month = g.IF_current_month
+    # boll_rsi_long(context, data)
+    current_time = context.current_dt
+    #
+    g.current_time = current_time
+
+    # 没有交易不代表没有持仓 如果有持仓就平仓再开仓
+    if g.trade_count == 1 and IN_CASE_OF_OPEN_POSITION and g.temp_close:
+        if current_time.minute % int(g.unit[:-1]) == 0:
+            if g.flag:
+                order_target_mw(g.IF_current_month, 0, side=g.long_short)
+                # g.flag = False
+                # log.info("--强行平仓--")
+            else:
+                order_mw(g.IF_current_month, g.deals, side=g.long_short)
+                # g.flag = True
+                # log.info("--强行开仓--")
+            g.temp_close = False
+
+    if current_time < current_time.replace(hour=14, minute=55, second=0,
+                                           microsecond=0) and g.trade_count < INTERNAL_TRADING_LIMIT:  #每日交易次数限制
+
+        # 每个周期执行一次
+        if current_time.minute % int(g.unit[:-1]) == 0:
+            # 获取数据
+            data = MarketDataRetriever.get_data_bars(count=g.data_windows_size,  # 数据窗口大小
+                                                     unit=g.unit,  # 数据运行周期
+                                                     reference=g.reference,  # 分析参考标的
+                                                     )
+
+            data = TechnicalIndicators(data)
+
+            func_reg[SELECTED_STRATEGY](context, data)
+
+    if (g.trade_count == 0 and
+            IN_CASE_OF_OPEN_POSITION and
+            current_time == current_time.replace(hour=14, minute=50, second=0, microsecond=0)):
+        # log.info("error")
+        if g.flag:
+            order_target_mw(g.IF_current_month, 0, side=g.long_short)
+            # g.flag = False
+            # log.info("--强行平仓--")
+        else:
+            order_mw(g.IF_current_month, g.deals, side=g.long_short)
+            # g.flag = True
+            # log.info("--强行开仓--")
+        g.temp_close = True
+
+    # 单日那道题的，有个规则，就是最后必须得是平仓信号，就是最晚14.55分要是没平，必须得平仓 #LYY  这里太死板
+    if CLOSE_POSITIONS_AT_CLOSE and current_time == current_time.replace(hour=14, minute=55, second=0, microsecond=0):
+
+        if g.flag:
+            order_target_mw(g.IF_current_month, 0, side=g.long_short)
+            # g.flag = False
+            # log.info("--强行平仓--")
+
+     
+    if current_time == current_time.replace(hour=15, minute=0, second=0, microsecond=0):
+        # 结算
+        after_trading_end(context)
+
+
+def rsi_trend_va(context, data):
+    """
+    RSI趋势策略va
+    :param context:
+    :param data:
+    :return:
+    """
+    # 交易方向
+    # g.v 为True 就是先空后多，False 就是先多后空
+    order_sequence = [OrderType.SHORT, OrderType.LONG] if g.v else [OrderType.LONG, OrderType.SHORT]
+    # g.long_short = order_sequence[0].value
+
+    rsi = RSI(g.reference, check_date=context.current_dt, unit=g.unit, include_now=True, N1=6)
+
+    if (context.current_dt.strftime('%H%M') < g.time_cut):
+        if rsi[g.reference] > g.buy_rsi and not g.flag:
+            order_mw(g.IF_current_month, g.deals, side=order_sequence[0].value)
+        elif rsi[g.reference] < g.sell_rsi and g.flag:
+            order_target_mw(g.IF_current_month, 0, side=g.long_short)
+    if context.current_dt.strftime('%H%M') == g.time_cut and g.flag:
+        order_target_mw(g.IF_current_month, 0, side=g.long_short)
+    if context.current_dt.strftime('%H%M') > g.time_cut:
+        if rsi[g.reference] < g.sell_rsi and not g.flag:
+            order_mw(g.IF_current_month, g.deals, side=order_sequence[1].value)
+        elif rsi[g.reference] > g.buy_rsi and g.flag:
+            order_target_mw(g.IF_current_month, 0, side=g.long_short)
+
+
+# 下单
+def execute_order(security, amount, side, is_opening=True):
+    """
+    下单
+    :param security: 证券代码
+    :param amount: 交易数量
+    :param side: 交易方向
+    :param is_opening: 是否为开仓操作，True为开仓，False为平仓
+    :return:
+    """
+    # log.info(f"security: {security}, amount: {amount}, side: {side}, is_opening: {is_opening}")
+    operation = "开仓" if is_opening else "平仓"
+    log.info(f"---{operation}---")
+
+    # 根据操作类型调用不同的下单函数
+    #注意这里都是市价下单 因为没穿price参数  LYY
+    order_func = order if is_opening else order_target
+    # 下单
+    exe_order = order_func(security, amount, side=side)
+    if exe_order:    #####判断的是「订单指令成功提交到聚宽系统」，不代表已经成交  LYY  这里也要改   #这地方稀烂 实盘不能这样 LYY
+        g.trade_count += 1
+        g.flag = is_opening
+        g.long_short = side
+        log.info(f"---{operation}成功---")
+        g.daily_trade_record.append({
+            'security': security,
+            'amount': amount,
+            'side': side,
+            'flag': operation,
+            'trade_time': g.current_time,
+            'price': f'{exe_order.price}',
+        })
+    else:
+        log.info(f"---{operation}失败---")
+
+
+def order_target_mw(security, amount, side):
+    """
+    下单
+    :param security:  证券代码
+    :param amount:  交易数量
+    :param side:  交易方向
+    :return:
+    """
+    # if g.trade_count < INTERNAL_TRADING_LIMIT:
+    execute_order(security, amount, side, is_opening=False)
+
+
+def order_mw(security, amount, side, is_opening=True):
+    """
+    下单
+    :param security:  证券代码
+    :param amount:  交易数量
+    :param side:  交易方向
+    :return:
+    """
+    # if g.trade_count < INTERNAL_TRADING_LIMIT:
+    execute_order(security, amount, side, is_opening)
+
+
+# 每日结算
+def after_trading_end(context):
+    """
+    每日结算
+    :param context:
+    :return:
+    """
+    # 每日结算
+    log.info("===每日结算===")
+    for trade in g.daily_trade_record:
+        log.info(f"交易方向：{trade['side']}"
+                 f" - {trade['flag']}"
+                 f" - 交易时间：{trade['trade_time']}"
+                 f" - 交易价格：{trade['price']}"
+                 )
+    log.info(f"交易次数：{g.trade_count}")
+    log.info(f"持仓标志：{g.flag}")
+    log.info(f"持仓方向：{g.long_short}")
+    log.info("===每日结算===")
+
+
+
+@alias(1, g=g, long_short=OrderType.LONG.value, ss=SELECTED_STRATEGY, flag=False,
+            deals=DEALS, buy_rsi=RS5_BUY_RSI, sell_rsi=RS5_SELL_RSI)
+def rsi_long(context, data):
+    """
+    策略1 趋势-多-RSI
+    :param context:
+    :return:
+    """
+    # 计算RSI
+    rsi = RSI(g.reference, check_date=context.current_dt, unit=g.unit, include_now=True, N1=6)
+
+    if (not g.flag) and rsi[g.reference] < g.sell_rsi:
+        order_mw(g.IF_current_month, g.deals, side=OrderType.LONG.value)
+        # g.flag = True
+        # log.info("---开仓---")
+    elif g.flag and rsi[g.reference] > g.buy_rsi:
+        order_target_mw(g.IF_current_month, 0, side=OrderType.LONG.value)
+        # g.flag = False
+        # log.info("===平仓===")
+
+
+@alias(2, g=g, long_short=OrderType.SHORT.value, ss=SELECTED_STRATEGY, flag=False,
+         deals=DEALS, buy_rsi=RL5_BUY_RSI, sell_rsi=RL5_SELL_RSI)
+def rsi_short(context, data):
+    """
+    策略2 1分钟-趋势-空-RSI
+    :param context:
+    :return:
+    """
+
+    # 计算RSI
+    rsi = RSI(g.reference, check_date=context.current_dt, unit=g.unit, include_now=True, N1=6)
+
+    if (not g.flag) and rsi[g.reference] > g.buy_rsi:
+        order_mw(g.IF_current_month, g.deals, side=OrderType.SHORT.value)
+        # g.flag = True
+        # log.info(f"---开仓---{rsi[g.reference]}")
+    elif g.flag and rsi[g.reference] < g.sell_rsi:
+        order_target_mw(g.IF_current_month, 0, side=OrderType.SHORT.value)
+        # g.flag = False
+        # log.info(f"===平仓==={rsi[g.reference]}")
+
+
+@alias(3, g=g, long_short=OrderType.LONG.value, ss=SELECTED_STRATEGY, flag=False, deals=DEALS,
+       close_rsi=RML_CLOSE_RSI)
+def roc_mean_long(context, data):
+    """
+    策略3：震荡-多-RoC均线
+    :param context:
+    :param data:
+    :return:
+    """
+    roc = data.ROC(N=12)
+    roc_ma = data.MA_column(roc, N=6)
+    rsi = data.RSI(N=6)
+
+    if (not g.flag) and roc_ma.iloc[-1] > 0 and roc.iloc[-2] < 0:
+        order_mw(g.IF_current_month, g.deals, side=OrderType.LONG.value)
+        # g.flag = True
+        # log.info("---开多---")
+
+    elif g.flag and rsi.iloc[-2] > g.close_rsi:
+        order_target_mw(g.IF_current_month, 0, side=OrderType.LONG.value)
+        # g.flag = False
+        # log.info("===平多===")
+
+
+@alias(4, g=g, long_short=OrderType.LONG.value, ss=SELECTED_STRATEGY, flag=False,
+       deals=DEALS,
+       buy_rsi=WR_BUY_WILL,
+       sell_rsi=WR_SELL_RSI)
+def wr_rsi(context, data):
+    """
+    策略4 震荡-多-WR+RSI
+    :param context: 上下文
+    :param data: DataFrame, 包含股票数据的DataFrame
+    :return:
+    """
+    # log.info(f"---开始执行策略---{g.trade_count}-{IN_CASE_OF_OPEN_POSITION}-{g.temp_close}")
+
+    # 计算威廉指标
+    wr = data.WR(N=10)
+
+    # 计算RSI
+    rsi = RSI(g.reference, check_date=context.current_dt, unit=g.unit, include_now=True, N1=6)
+
+    if (not g.flag) and wr.iloc[-2] >= g.buy_rsi and wr.iloc[-3] >= g.buy_rsi:
+        order_mw(g.IF_current_month, g.deals, side=OrderType.LONG.value)
+        # g.flag = True
+        # log.info("---开仓---")
+    elif g.flag and rsi[g.reference] > g.sell_rsi:
+        order_target_mw(g.IF_current_month, 0, side=OrderType.LONG.value)
+        # g.flag = False
+        # log.info("===平仓===")
+
+
+@alias(5, g=g, long_short=OrderType.SHORT.value, ss=SELECTED_STRATEGY, flag=False, deals=DEALS,
+         close_rsi=RMS_CLOSE_RSI)
+def roc_mean_short(context, data):
+    """
+    策略5：震荡-空-ROC均线突破
+    :param context:
+    :param data:
+    :return:
+    """
+    roc = data.ROC(N=12)
+    roc_ma = data.MA_column(roc, N=6)
+    rsi = data.RSI(N=6)
+
+    if (not g.flag) and roc_ma.iloc[-1] < 0 and roc.iloc[-2]:
+        order_mw(g.IF_current_month, g.deals, side=OrderType.SHORT.value)
+        # g.flag = True
+        # log.info("---开空---")
+
+    elif g.flag and rsi.iloc[-2] < g.close_rsi:
+        order_target_mw(g.IF_current_month, 0, side=OrderType.SHORT.value)
+        # g.flag = False
+        # log.info("===平空===")
+
+
+@alias(6, g=g, long_short=OrderType.SHORT.value, ss=SELECTED_STRATEGY, flag=False, deals=DEALS,
+       buy_rsi=WR3S_BUY_RSI, sell_rsi=WR3S_SELL_WILL)
+def wr_rsi_3_short(context, data):
+    """
+    策略6 震荡-空-WR+RSI+3周期
+    :param context:
+    :return:
+    """
+    # 计算威廉指标
+    wr = data.WR(N=10)
+
+    # 计算RSI
+    rsi = RSI(g.reference, check_date=context.current_dt, unit=g.unit, include_now=True, N1=6)
+
+    if (not g.flag) and all(wr.iloc[-2-i] <= g.sell_rsi for i in range(3)) and wr.iloc[-5] > g.sell_rsi:
+        order_mw(g.IF_current_month, g.deals, side=OrderType.SHORT.value)
+        # g.flag = True
+        # log.info("---开仓---")
+    elif g.flag and rsi[g.reference] < g.buy_rsi:
+        order_target_mw(g.IF_current_month, 0, side=OrderType.SHORT.value)
+        # g.flag = False
+        # log.info("===平仓===")
+
+
+@alias(7, g=g, long_short=OrderType.SHORT.value, ss=SELECTED_STRATEGY, flag=False, deals=DEALS,
+         sell_rsi=RDC_SELL_RSI)
+def roc_dead_cross(context, data):
+    """
+    策略7：震荡-空-RoC高位死叉
+    :param context:
+    :param data:
+    :return:
+    """
+    roc = data.ROC(N=12)
+    rsi = data.RSI(N=6)
+    roc_ma = data.MA_column(roc, N=6)
+
+    if (not g.flag) and roc_ma.iloc[-1] > 0 and roc.iloc[-2] <= roc_ma.iloc[-1] and roc.iloc[-3] > roc_ma.iloc[-2]:
+        order_mw(g.IF_current_month, g.deals, side=OrderType.SHORT.value)
+
+    elif g.flag and rsi.iloc[-2] < g.sell_rsi:
+        order_target_mw(g.IF_current_month, 0, side=OrderType.SHORT.value)
+
+
+@alias(8, g=g, long_short=OrderType.LONG.value, ss=SELECTED_STRATEGY, flag=False, deals=DEALS,
+         buy_rsi=RGC_BUY_RSI)
+def roc_golden_cross(context, data):
+    """
+    策略8：震荡-多-RoC低位金叉
+    :param context:
+    :param data:
+    :return:
+    """
+    roc = data.ROC(N=12)
+    rsi = data.RSI(N=6)
+    roc_ma = data.MA_column(roc, N=6)
+
+    if (not g.flag) and roc_ma.iloc[-1] < 0 and roc.iloc[-2] >= roc_ma.iloc[-1] and roc.iloc[-3] < roc_ma.iloc[-2]:
+        order_mw(g.IF_current_month, g.deals, side=OrderType.LONG.value)
+    elif g.flag and rsi.iloc[-2] > g.buy_rsi:
+        order_target_mw(g.IF_current_month, 0, side=OrderType.LONG.value)
+
+
+@alias(9, g=g, long_short=OrderType.SHORT.value, ss=SELECTED_STRATEGY, deals=DEALS,
+    flag=False,
+    countnum = 2,
+    mode = 1,
+    count = 0,
+    death = True,
+    start = False,
+    dif1 = [],
+    dif2 = [],
+    close1 = [],
+    close2 = [],
+    macdamount = [],
+)
+def macd_top_divergence_short(context, data):
+    """
+    策略9：趋势-空-MACD顶背离
+    """
+
+    # 计算MACD
+    dif, dea, macd = data.MACD()
+    close = data["close"]
+
+    if (dif.iloc[-2] > dea.iloc[-2] and dif.iloc[-1] < dea.iloc[-1]) and g.flag:
+        # 以市价平多单
+        order_target_mw(g.IF_current_month, 0, side=OrderType.SHORT.value)
+
+    elif g.mode == 1:
+        if (g.death) and (dea.iloc[-2] > dif.iloc[-2] and dea.iloc[-1] < dif.iloc[-1]):  # 第一次金叉
+            g.start = True
+            g.death = False  # 先死叉才金叉，按顺序执行
+
+        if (not g.death) and (dif.iloc[-2] > dea.iloc[-2] and dif.iloc[-1] < dea.iloc[-1]):  # 第一次死叉
+            if g.count > g.countnum:
+                g.difmax1 = max(g.dif1)
+                g.closemax1 = max(g.close1)
+                g.mode = 2
+
+            g.start = False
+            g.death = True
+            g.dif1.clear()  # 清空死叉区间记录的dea、close、macd
+            g.close1.clear()
+            g.count = 0
+
+        if (g.start):
+            g.dif1.append(dif.iloc[-1])  # 将dea、close、macd值添加到列表，找出最小值
+            g.close1.append(close.iloc[-1])
+            g.count = g.count + 1
+
+    elif g.mode == 2:
+        if (g.death) and (dea.iloc[-2] > dif.iloc[-2] and dea.iloc[-1] < dif.iloc[-1]):
+            g.death = False
+            g.start = True
+            g.count = 0
+
+        if (not g.death) and (dif.iloc[-2] > dea.iloc[-2] and dif.iloc[-1] < dea.iloc[-1]):  # 第二次死叉
+            if g.count > g.countnum:
+                g.difmax2 = max(g.dif2)
+                g.closemax2 = max(g.close2)
+                g.mode = 1
+                if g.difmax1 > g.difmax2 and g.closemax1 < g.closemax2 and not g.flag:
+                    # 以市价买空单
+                    order_mw(g.IF_current_month, g.deals, side=OrderType.SHORT.value)
+
+            g.death = True
+            g.start = False
+            g.dif2.clear()
+            g.close2.clear()
+            g.count = 0
+
+        if (g.start):
+            g.dif2.append(dif.iloc[-1])
+            g.close2.append(close.iloc[-1])
+            g.count = g.count + 1
+
+
+@alias(10, g=g, long_short=OrderType.LONG.value, ss=SELECTED_STRATEGY, flag=False, deals=DEALS,
+       buy_rsi=WR3L_BUY_WILL,
+       sell_rsi=WR3L_SELL_RSI)
+def wr_rsi_3_long(context, data):
+    """
+    策略10：震荡-多-WR+RSI+3周期
+    :param context:
+    :return:
+    """
+    # 计算威廉指标
+    wr = data.WR(N=10)
+
+    # 计算RSI
+    rsi = RSI(g.reference, check_date=context.current_dt, unit=g.unit, include_now=True, N1=6)
+
+    if (not g.flag) and all(wr.iloc[-2-i] >= g.buy_rsi for i in range(3)) and wr.iloc[-5] < g.buy_rsi:
+        order_mw(g.IF_current_month, g.deals, side=OrderType.LONG.value)
+
+    elif g.flag and rsi[g.reference] > g.sell_rsi:
+        order_target_mw(g.IF_current_month, 0, side=OrderType.LONG.value)
+
+
+# 开多 收盘价大于30日最高价均值
+# 平多 收盘价小于30日最低价均值
+@alias(11, g=g, long_short=OrderType.LONG.value, ss=SELECTED_STRATEGY, flag=False, deals=DEALS,
+    ma_low_period=MAL_LOW_MA_N, ma_high_period=MAL_HIGH_MA_N)
+def close_high_mean_long(context, data):
+    """
+    策略11：趋势-多-均线策略
+    :param context:
+    :param data:
+    :return:
+    """
+    close = data["close"]
+    high = data["high"]
+    low = data["low"]
+    low_mean = data.MA_column(low, N=g.ma_low_period)
+    high_mean = data.MA_column(high, N=g.ma_high_period)
+
+    if (not g.flag) and close.iloc[-1] > high_mean.iloc[-1]:
+        order_mw(g.IF_current_month, g.deals, side=OrderType.LONG.value)
+    elif g.flag and close.iloc[-1] < low_mean.iloc[-1]:
+        order_target_mw(g.IF_current_month, 0, side=OrderType.LONG.value)
+
+
+@alias(12, g=g, long_short=OrderType.SHORT.value, ss=SELECTED_STRATEGY, flag=False, deals=DEALS,
+       ma_low_period=MAS_LOW_MA_N, ma_high_period=MAS_HIGH_MA_N)
+def close_low_mean_short(context, data):
+    """
+    策略12：趋势-空-均线策略
+    :param context:
+    :param data:
+    :return:
+    """
+    close = data["close"]
+    high = data["high"]
+    low = data["low"]
+    low_mean = data.MA_column(low, N=30)
+    high_mean = data.MA_column(high, N=30)
+
+    if (not g.flag) and close.iloc[-1] < low_mean.iloc[-1]:
+        order_mw(g.IF_current_month, g.deals, side=OrderType.SHORT.value)
+    elif g.flag and close.iloc[-1] > high_mean.iloc[-1]:
+        order_target_mw(g.IF_current_month, 0, side=OrderType.SHORT.value)
+
+# BOLL上轨突破
+@alias(13, g=g, long_short=OrderType.LONG.value, ss=SELECTED_STRATEGY, flag=False, deals=DEALS,
+    boll_n=BOLLL_N)
+def boll_up_break_long(context, data):
+    """
+    策略13：趋势-多-BOLL上轨突破
+    :param context:
+    :param data:
+    :return:
+    """
+    close = data["close"]
+    upper_band, middle_band, lower_band = data.BOLL(N=g.boll_n)
+
+    if (not g.flag) and close.iloc[-1] > upper_band.iloc[-1]:
+        order_mw(g.IF_current_month, g.deals, side=OrderType.LONG.value)
+    elif g.flag and close.iloc[-1] < middle_band.iloc[-1]:
+        order_target_mw(g.IF_current_month, 0, side=OrderType.LONG.value)
+
+# BOLL下轨突破
+@alias(14, g=g, long_short=OrderType.SHORT.value, ss=SELECTED_STRATEGY, flag=False, deals=DEALS,
+    boll_n=BOLLS_N)
+def boll_down_break_short(context, data):
+    """
+    策略14：趋势-空-BOLL下轨突破
+    :param context:
+    :param data:
+    :return:
+    """
+    close = data["close"]
+    upper_band, middle_band, lower_band = data.BOLL(N=g.boll_n)
+
+    if (not g.flag) and close.iloc[-1] < lower_band.iloc[-1]:
+        order_mw(g.IF_current_month, g.deals, side=OrderType.SHORT.value)
+    elif g.flag and close.iloc[-1] > middle_band.iloc[-1]:
+        order_target_mw(g.IF_current_month, 0, side=OrderType.SHORT.value)
+
+# BOLL+RSI
+@alias(15, g=g, long_short=OrderType.LONG.value, ss=SELECTED_STRATEGY, flag=False, deals=DEALS,
+       ma_n=BRL_MA_N, sell_rsi=BRL_SELL_RSI)
+def boll_rsi_long(context, data):
+    """
+    策略15：趋势-多-BOLL+RSI
+    :param context:
+    :param data:
+    :return:
+    """
+    bias = data.BIAS(N=g.ma_n)
+    upper_band, middle_band, lower_band = data.BOLL(bias)
+    cross = data.CROSS(bias, lower_band)
+    rsi = data.RSI(N=6)
+    time_cut = '1450'
+
+    if (not g.flag) and cross[-1] and g.current_time.strftime('%H%M') < time_cut:
+        order_mw(g.IF_current_month, g.deals, side=OrderType.LONG.value)
+    # 平仓条件是RSI小于卖出RSI 并且距离上次开仓时间大于5分钟
+    elif g.flag and rsi.iloc[-2] < g.sell_rsi and (g.daily_trade_record==[] or g.current_time - g.daily_trade_record[-1]['trade_time'] > datetime.timedelta(minutes=5)):
+        order_target_mw(g.IF_current_month, 0, side=OrderType.LONG.value)
+
+
+# 趋势-多-空头力量bear_power
+@alias(16, g=g, long_short=OrderType.LONG.value, ss=SELECTED_STRATEGY, flag=False, deals=DEALS,
+       ma_n=BRL_MA_N, sell_rsi=BRL_SELL_RSI)
+def bear_power_long(context, data):
+    """
+    策略16：趋势-多-空头力量bear_power
+    空头策略
+    :param context:
+    :param data:
+    :return:
+    """
+    current_time=context.current_dt
+    bear = data.BEAR(N=5)
+    rsi = data.RSI(N=14)
+    last_five = rsi.iloc[-4:-2]  
+    seconds_current = current_time.hour * 3600 + current_time.minute * 60 + current_time.second  
+    seconds_temp = g.temp_time.hour * 3600 + g.temp_time.minute * 60 + g.temp_time.second  
+    time_difference_seconds = seconds_current - seconds_temp  
+    if current_time.time() > time(9, 30, 0) and (not g.flag) and bear.iloc[-1] < -0.3 and rsi.iloc[-1] < 50 and time_difference_seconds > 1200:
+        order_mw(g.IF_current_month, g.deals, side=OrderType.SHORT.value)
+        
+
+    
+    elif g.flag and bear.iloc[-1] > 0:
+        order_target_mw(g.IF_current_month, 0, side=OrderType.SHORT.value)
+        g.temp_time = current_time
+        
+
+
+        
