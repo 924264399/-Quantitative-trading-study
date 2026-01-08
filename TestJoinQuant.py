@@ -35,8 +35,34 @@ def initialize(context):
 #         futures_5m_strategy,
 #         time_rule=MarketTime(minute='5m'),
 #         reference_security='IF2503.CCFX'  # 参考期货标的，确定交易时段)
-  
 
+
+
+
+#macd策略
+# from jqlib.technical_analysis import MACD
+# MACD(security_list,check_date,SHORT, LONG,MID)
+
+# 5日均线策略
+# # 方式1：通配符导入（示例代码的写法）
+#  from jqlib.technical_analysis import *
+#  MA(security_list, check_date, timeperiod=5, unit='1d')  # 直接用MA，无需前缀
+
+  
+#from jqlib.technical_analysis import *
+#security = '000001.XSHE'
+#check_dates = ['2022-09-05'，'2022-09-06'，'2022-09-07"]
+
+#for check_date in check_dates:
+#    MA5 = MA(security,check_date=check_date,timeperiod=5)
+#    MA10 = MA(security,check_date=check_date,timeperiod=10)
+#    MA20 = MA(security,check_date=check_date,timeperiod=20)
+#
+#    print(check_date,'5日均线:',MA5[security])
+#    print(check_date,'10日均线:',MA10[security])
+#    print(check_date,'20日均线:',MA20[security])
+
+#返回值是字典 所以用MA5[security] 这种方式获取 
 
 #策略函数
 def market_open(context):
